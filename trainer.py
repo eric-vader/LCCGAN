@@ -15,7 +15,7 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 from model_define import _netG, _netD, _encoder, _decoder
 import numpy as np
-
+from tqdm import tqdm
 
 if opt.manualSeed is None:
     opt.manualSeed = random.randint(1, 10000)
@@ -23,6 +23,7 @@ print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 if opt.cuda:
+    opt.gpu = 0
     torch.cuda.set_device(opt.gpu)
     torch.cuda.manual_seed_all(opt.manualSeed)
 cudnn.benchmark = True
@@ -45,7 +46,7 @@ def createDataSet(opt, imageSize):
                                transform=transforms.Compose([
                                    transforms.Scale(imageSize),
                                    transforms.ToTensor(),
-                                   transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                                   transforms.Normalize((0.1307,), (0.3081,)),
                                ])
         )
     return dataset
@@ -57,11 +58,12 @@ def dataparallel(model, ngpus, gpu0=0):
     gpu_list = list(range(gpu0, gpu0+ngpus))
     assert torch.cuda.device_count() >= gpu0+ngpus, "Invalid Number of GPUs"
     if isinstance(model, list):
-        for i in range(len(model)):
-            if ngpus >= 2:
+        if ngpus >= 2:
+            for i in range(len(model)):
                 if not isinstance(model[i], nn.DataParallel):
                     model[i] = torch.nn.DataParallel(model[i], gpu_list).cuda()
-            else:
+        else:
+            for i in range(len(model)):
                 model[i] = model[i].cuda()
     else:
         if ngpus >= 2:
@@ -74,6 +76,13 @@ def dataparallel(model, ngpus, gpu0=0):
 
 class Trainer(object):
     def __init__(self, opt):
+    
+        # Some hack, ERIC HAN
+        try:
+            os.makedirs("output")
+        except OSError:
+            pass
+    
         self.opt = opt
         self.netG = _netG(opt.basis_num, opt.embedding_dim, opt.nz, opt.ngf, opt.nc)
         self.netD = _netD(opt.nc, opt.ndf)
@@ -146,7 +155,7 @@ class Trainer(object):
         ############################
         # Stage1: Autoencoder
         ############################
-        for epoch in range(self.opt.niter1):
+        for epoch in tqdm(range(self.opt.niter1), desc="Stage 1"):
             for i, data in enumerate(self.dataloader, 0):
                 real_cpu, _ = data
                 batch_size = real_cpu.size(0)
@@ -172,7 +181,7 @@ class Trainer(object):
         self.dataloader = torch.utils.data.DataLoader(createDataSet(self.opt, self.opt.imageSize), 
             batch_size=s2_batchSize,
             shuffle=True, num_workers=int(self.opt.workers))
-        for epoch in range(self.opt.niter2):
+        for epoch in tqdm(range(self.opt.niter2), desc="Stage 2"):
             for i, data in enumerate(self.dataloader, 0):
                 real_cpu, _ = data
                 batch_size = real_cpu.size(0)
@@ -225,7 +234,7 @@ class Trainer(object):
             batch_size=s3_batchSize*self.opt.criticIters,
             shuffle=True, num_workers=int(self.opt.workers))
         counter_s3 = 0
-        for epoch in range(self.opt.niter3):
+        for epoch in tqdm(range(self.opt.niter3), desc="Stage 3"):
             for i, data in enumerate(self.dataloader, 0):
                 counter_s3 = counter_s3 + 1
                 self.netG.train()
@@ -251,6 +260,7 @@ class Trainer(object):
                 fake = self.netG(noisev)
                 self.label.data.resize_(batch_size).fill_(0)
                 output = self.netD(fake.detach())
+                assert (output.data.cpu().numpy().all() >= 0. and output.data.cpu().numpy().all() <= 1.)
                 errD_fake = self.criterion_bce(output, self.label)
                 errD_fake.backward()
                 D_G_z1 = output.data.mean()
@@ -266,7 +276,18 @@ class Trainer(object):
                 errG.backward()
                 D_G_z2 = output.data.mean()
                 self.optimizerG.step()
-
+                
+                if i % 100 == 0:
+                    #vutils.save_image(self.real_img,
+                    #        'output/real_samples.png',
+                    #        normalize=True)
+                    vutils.save_image(fake.detach(),
+                            'output/fake_samples_epoch_%03d.png' % epoch,
+                            normalize=True)
+                    #fake = self.netG(fixed_noisev)
+                    #vutils.save_image(fake.detach(),
+                    #        'output/fake_samples_epoch_%03d.png' % epoch,
+                    #        normalize=True)
 
 if __name__ == '__main__':
     trainer = Trainer(opt)
