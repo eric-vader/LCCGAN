@@ -77,9 +77,11 @@ def dataparallel(model, ngpus, gpu0=0):
 class Trainer(object):
     def __init__(self, opt):
     
+        self.output_dir = "output_ndf{}_nz{}".format(opt.ndf, opt.nz)
+    
         # Some hack, ERIC HAN
         try:
-            os.makedirs("output")
+            os.makedirs(self.output_dir)
         except OSError:
             pass
     
@@ -282,7 +284,7 @@ class Trainer(object):
                     #        'output/real_samples.png',
                     #        normalize=True)
                     vutils.save_image(fake.detach(),
-                            'output/fake_samples_epoch_%03d.png' % epoch,
+                            self.output_dir + '/fake_samples_epoch_%03d.png' % epoch,
                             normalize=True)
                     #fake = self.netG(fixed_noisev)
                     #vutils.save_image(fake.detach(),
